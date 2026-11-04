@@ -1,4 +1,5 @@
 telethon
 aiohttp
+aiohttp_socks
 requests
 python-dotenv
