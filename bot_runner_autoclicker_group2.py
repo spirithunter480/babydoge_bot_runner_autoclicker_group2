@@ -31,7 +31,13 @@ BOT_USERNAME = "BabyDOGERushbot"
 
 TAP_LOCK = asyncio.Lock()
 
-TELEGRAM_NOTIFIER_BOT_TOKEN = os.getenv("NOTIFIER_BOT_TOKEN", os.getenv("NOTIFIER_BOT_TOKEN2", "")).strip()
+TELEGRAM_NOTIFIER_BOT_TOKEN = (
+    os.getenv("NOTIFIER_BOT_TOKEN")
+    or os.getenv("NOTIFIER_BOT_TOKEN1")
+    or os.getenv("NOTIFIER_BOT_TOKEN2")
+    or ""
+).strip()
+
 TELEGRAM_NOTIFIER_CHAT_ID = os.getenv("NOTIFIER_CHAT_ID", "").strip()
 
 async def send_telegram_alert(session, message: str):
