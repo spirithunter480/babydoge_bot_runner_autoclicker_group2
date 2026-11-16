@@ -1,9 +1,6 @@
 # ==============================================================================
 # BABY DOGE AUTO-TAP — نسخه اختصاصی BabyDOGERushbot (گروه ۲)
-# پشتیبانی از پروکسی مجزا برای هر اکانت (Webshare Proxy Support)
-# اتصال مستقیم به سرور رسمی بدون ورکر کلودفلر (Direct Mode)
-# سیستم هوشمند جوین و لفت قطعی کانال‌ها + کش تسک‌های باگ‌دار
-# سیستم گزارش‌دهی خودکار به ربات تلگرام + مدیریت هوشمند capResetsAt
+# پشتیبانی از پروکسی مجزا، خروج قطعی از کانال‌ها و مدیریت ایمن capResetsAt
 # ==============================================================================
 
 import os
@@ -14,6 +11,7 @@ import random
 import urllib.parse
 import re
 import sys
+from datetime import datetime
 import aiohttp
 from aiohttp_socks import ProxyConnector
 from telethon import TelegramClient
@@ -31,14 +29,8 @@ API_ID = int(os.getenv("TG_API_ID") or 0)
 API_HASH = os.getenv("TG_API_HASH", "")
 BOT_USERNAME = "BabyDOGERushbot"
 
-# ==============================================================================
-# [GLOBAL TAP LOCK] قفل سراسری برای تضمین تپ زدن تک‌نوبتی میان اکانت‌ها
-# ==============================================================================
 TAP_LOCK = asyncio.Lock()
 
-# ==============================================================================
-# [TELEGRAM NOTIFIER] دریافت توکن و چت‌آیدی (اختصاصی گروه ۲)
-# ==============================================================================
 TELEGRAM_NOTIFIER_BOT_TOKEN = os.getenv("NOTIFIER_BOT_TOKEN", os.getenv("NOTIFIER_BOT_TOKEN2", "")).strip()
 TELEGRAM_NOTIFIER_CHAT_ID = os.getenv("NOTIFIER_CHAT_ID", "").strip()
 
@@ -57,9 +49,6 @@ async def send_telegram_alert(session, message: str):
     except Exception:
         pass
 
-# ==============================================================================
-# آدرس‌های سرور رسمی بازی
-# ==============================================================================
 BASE_URL = os.getenv("BASE_URL", "https://fa-api.bleon.net")
 
 INIT_URL = f"{BASE_URL}/v1/game/init"
@@ -97,7 +86,7 @@ def get_account_headers(acc):
     match = re.search(r"Chrome/(\d+)", ua)
     chrome_ver = match.group(1) if match else "128"
     device_id = acc.get("device_id", "")
-    
+
     headers = {
         "User-Agent": ua,
         "Accept": "*/*",
@@ -132,6 +121,19 @@ def parse_telethon_proxy(proxy_url):
         }
     except Exception:
         return None
+
+def parse_reset_timestamp_ms(val):
+    if not val:
+        return None
+    if isinstance(val, (int, float)):
+        return val * 1000.0 if val < 1e12 else float(val)
+    if isinstance(val, str):
+        try:
+            dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            return dt.timestamp() * 1000.0
+        except Exception:
+            return None
+    return None
 
 async def fetch_init_data(session_str, proxy_str=None):
     tg_proxy = parse_telethon_proxy(proxy_str)
@@ -201,12 +203,9 @@ async def send_tap(session, init_data, taps, token):
         print(f"[Tap Network Exception]: {e}")
         return None
 
-# ==============================================================================
-# ماژول عضویت و لفت قطعی کانال‌های تلگرام
-# ==============================================================================
 async def join_telegram_target(client, link: str):
     clean_link = link.split("?")[0].strip()
-    
+
     invite_match = re.search(r"t\.me/(?:\+|joinchat/)([a-zA-Z0-9_-]+)", clean_link)
     if invite_match:
         invite_hash = invite_match.group(1)
@@ -268,9 +267,6 @@ async def send_task_submit(session, init_data, task_id):
         print(f"[Task Submit Error]: {e}")
         return None
 
-# ==============================================================================
-# پردازش جامع تسک‌ها با کش شکست برای جلوگیری از چرخه بیهوده
-# ==============================================================================
 async def process_tasks(session, init_data, acc_name, current_balance, session_str, proxy_str, failed_join_tasks):
     payload = {
         "bot": BOT_USERNAME,
@@ -297,10 +293,9 @@ async def process_tasks(session, init_data, acc_name, current_balance, session_s
         claimable_at = task.get("claimableAt")
         reward = task.get("reward", 0)
 
-        # الف) تسک‌های عضویت کانال تلگرام
         if task_type == "join" and state == "available" and task_id not in failed_join_tasks:
             print(f"[{acc_name}] Handling Join Task: '{title}'...")
-            
+
             start_payload = {"bot": BOT_USERNAME, "initData": init_data, "task_id": task_id}
             join_link = link
             try:
@@ -317,8 +312,7 @@ async def process_tasks(session, init_data, acc_name, current_balance, session_s
             try:
                 await tg_client.connect()
                 channel_entity = await join_telegram_target(tg_client, join_link)
-                
-                # مکث ۵ تا ۷ ثانیه‌ای برای ثبت وضعیت در دیتابیس تلگرام
+
                 await asyncio.sleep(random.uniform(5.0, 7.0))
 
                 c_data = await send_task_submit(session, init_data, task_id)
@@ -342,7 +336,6 @@ async def process_tasks(session, init_data, acc_name, current_balance, session_s
 
             await asyncio.sleep(random.uniform(2.5, 4.0))
 
-        # ب) تسک‌های بازدیدی
         elif task_type == "visit":
             is_ready = (state == "claimable") or (claimable_at and now_ms >= claimable_at and state != "done")
             if is_ready:
@@ -369,9 +362,6 @@ async def process_tasks(session, init_data, acc_name, current_balance, session_s
 
     return current_balance
 
-# ==============================================================================
-# استریک و اسپین دو مرحله‌ای
-# ==============================================================================
 async def claim_streak(session, init_data, acc_name=""):
     ad_payload = {"bot": BOT_USERNAME, "initData": init_data, "kind": "streak"}
     try:
@@ -389,11 +379,15 @@ async def claim_streak(session, init_data, acc_name=""):
 
         streak_payload = {"bot": BOT_USERNAME, "grant_id": grant_id, "initData": init_data}
         async with session.post(STREAK_URL, json=streak_payload, timeout=aiohttp.ClientTimeout(total=15)) as s_resp:
-            res = await s_resp.json()
+            text = await s_resp.text()
+            try:
+                res = json.loads(text)
+            except Exception:
+                res = {}
             if s_resp.status == 200:
                 return res
             else:
-                print(f"[{acc_name}] Streak skipped: {res.get('message', 'Ad not verified')}")
+                print(f"[{acc_name}] Streak skipped: {res.get('message', f'HTTP {s_resp.status}')}")
                 return None
     except Exception as e:
         print(f"[{acc_name}] Streak execution error: {e}")
@@ -416,22 +410,23 @@ async def claim_spin(session, init_data, acc_name=""):
 
         spin_payload = {"bot": BOT_USERNAME, "grant_id": grant_id, "initData": init_data}
         async with session.post(SPIN_URL, json=spin_payload, timeout=aiohttp.ClientTimeout(total=15)) as s_resp:
-            res = await s_resp.json()
+            text = await s_resp.text()
+            try:
+                res = json.loads(text)
+            except Exception:
+                res = {}
             if s_resp.status == 200:
                 return res
             else:
-                print(f"[{acc_name}] Spin skipped: {res.get('message', 'Ad not verified')}")
+                print(f"[{acc_name}] Spin skipped: {res.get('message', f'HTTP {s_resp.status}')}")
                 return None
     except Exception as e:
         print(f"[{acc_name}] Spin execution error: {e}")
         return None
 
-# ==============================================================================
-# آمار لیدربرد
-# ==============================================================================
 async def fetch_contest_stats(session, init_data, acc_name=""):
     payload = {"bot": BOT_USERNAME, "initData": init_data}
-    for attempt in range(2):
+    for _ in range(2):
         try:
             async with session.post(CONTEST_URL, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status == 200:
@@ -453,9 +448,6 @@ async def fetch_contest_stats(session, init_data, acc_name=""):
 
     return "N/A", "N/A"
 
-# ==============================================================================
-# ورکر اصلی هر اکانت
-# ==============================================================================
 async def babydoge_worker(acc, initial_offset):
     acc_name = acc.get("name", "Account")
     acc_headers = get_account_headers(acc)
@@ -492,7 +484,7 @@ async def babydoge_worker(acc, initial_offset):
                     config = init_res.get("config") or {}
                     spin_cooldown_hours = config.get("spinCooldownHours", 24)
                     spin_cooldown_ms = int(spin_cooldown_hours * 3600 * 1000)
-                    
+
                     last_streak = player.get("lastStreakClaim", 0)
                     last_spin = player.get("lastSpin", 0)
 
@@ -501,7 +493,6 @@ async def babydoge_worker(acc, initial_offset):
                     while True:
                         now_ms = time.time() * 1000
 
-                        # ۱. بررسی استریک روزانه
                         if now_ms - last_streak >= 86400000:
                             streak_res = await claim_streak(session, init_data, acc_name=acc_name)
                             if streak_res and streak_res.get("ok"):
@@ -514,7 +505,6 @@ async def babydoge_worker(acc, initial_offset):
                                 last_streak = now_ms
                             await asyncio.sleep(1.5)
 
-                        # ۲. بررسی اسپین روزانه
                         if now_ms - last_spin >= spin_cooldown_ms:
                             spin_res = await claim_spin(session, init_data, acc_name=acc_name)
                             if spin_res and spin_res.get("ok"):
@@ -527,10 +517,8 @@ async def babydoge_worker(acc, initial_offset):
                                 last_spin = now_ms
                             await asyncio.sleep(1.5)
 
-                        # ۳. پردازش و کلیم تسک‌ها با خروج قطعی از کانال‌ها
                         balance = await process_tasks(session, init_data, acc_name, balance, session_str, proxy_str, failed_join_tasks)
 
-                        # اطمینان از شارژ بودن مخزن قبل از شروع تپ
                         if energy < 980:
                             wait_fill = (1000 - energy) + random.uniform(2.0, 6.0)
                             print(f"[{acc_name}] Energy is {energy}/1000. Waiting {int(wait_fill)}s to refill...")
@@ -543,12 +531,9 @@ async def babydoge_worker(acc, initial_offset):
                         stop_threshold = random.randint(15, 30)
                         cap_resets_at = None
 
-                        # ======================================================
-                        # فاز انحصاری تپ با TAP_LOCK
-                        # ======================================================
                         async with TAP_LOCK:
                             print(f"[{acc_name}] Acquired TAP_LOCK. Tapping down to <= {stop_threshold} energy...")
-                            
+
                             while energy > stop_threshold and (time.time() - tap_start_time < 175.0):
                                 max_taps_possible = energy // 5
                                 if max_taps_possible < 3:
@@ -556,9 +541,8 @@ async def babydoge_worker(acc, initial_offset):
 
                                 taps_to_send = min(random.randint(12, 17), max_taps_possible)
                                 res = await send_tap(session, init_data, taps=taps_to_send, token=current_token)
-                                
+
                                 if res and res.get("ok"):
-                                    # بررسی کپ روزانه سرور
                                     if res.get("capped") is True or res.get("gained") == 0:
                                         cap_resets_at = res.get("capResetsAt")
                                         print(f"[{acc_name}] Daily cap reached! Reset timestamp: {cap_resets_at}")
@@ -585,17 +569,17 @@ async def babydoge_worker(acc, initial_offset):
 
                                     if energy <= stop_threshold:
                                         break
-                                    
+
                                 elif res and res.get("rate_limited"):
                                     print(f"[{acc_name}] 429 Throttled by server.")
                                     stop_reason = "throttled"
                                     break
-                                    
+
                                 elif res and res.get("unauthorized"):
                                     print(f"[{acc_name}] 401 Unauthorized detected.")
                                     stop_reason = "401"
                                     break
-                                    
+
                                 else:
                                     print(f"[{acc_name}] Invalid tap response.")
                                     stop_reason = "error"
@@ -606,13 +590,12 @@ async def babydoge_worker(acc, initial_offset):
                         if stop_reason in ["401", "error"]:
                             break
 
-                        # بررسی مجدد تسک‌ها
                         balance = await process_tasks(session, init_data, acc_name, balance, session_str, proxy_str, failed_join_tasks)
 
-                        # محاسبه زمان استراحت براساس کپ و ساعت سرور
-                        if stop_reason == "capped" and cap_resets_at:
-                            current_epoch_ms = time.time() * 1000
-                            diff_sec = (cap_resets_at - current_epoch_ms) / 1000.0
+                        reset_ms = parse_reset_timestamp_ms(cap_resets_at)
+                        if stop_reason == "capped" and reset_ms:
+                            current_epoch_ms = time.time() * 1000.0
+                            diff_sec = (reset_ms - current_epoch_ms) / 1000.0
                             if diff_sec > 0:
                                 sleep_time = diff_sec + random.uniform(180.0, 360.0)
                             else:
@@ -631,7 +614,6 @@ async def babydoge_worker(acc, initial_offset):
 
                         print(f"[{acc_name}] {status_note} Sleeping for {int(sleep_time)}s...")
 
-                        # ارسال گزارش پایان چرخه به ربات تلگرام
                         rank, earnings = await fetch_contest_stats(session, init_data, acc_name=acc_name)
                         if (earnings == "N/A" or earnings == 0) and "tapsTotal" in player:
                             earnings = player.get("tapsTotal", "N/A")
@@ -656,7 +638,9 @@ async def babydoge_worker(acc, initial_offset):
 
                         await asyncio.sleep(sleep_time)
 
-                        # پینگ بیداری
+                        if stop_reason == "capped":
+                            break
+
                         wake_res = await send_tap(session, init_data, taps=1, token=current_token)
                         if wake_res and wake_res.get("ok") and "player" in wake_res:
                             current_token = wake_res.get("tapToken", current_token)
@@ -679,9 +663,6 @@ async def babydoge_worker(acc, initial_offset):
     except asyncio.CancelledError:
         pass
 
-# ==============================================================================
-# تابع اصلی مدیریت تسک‌های نوبتی
-# ==============================================================================
 async def main():
     if not ACCOUNTS:
         print("No accounts found in ACCOUNTS_JSON or accounts.json.")
@@ -692,11 +673,11 @@ async def main():
     print("==================================================")
     print(f">>> BabyDOGE Auto-Tap Started ({num_accounts} Accounts) - Group 2")
     print(">>> Direct Mode (fa-api.bleon.net) | Dedicated Proxies Active")
-    print(f">>> Scheduled Auto-Stop: 5 Hours and 55 Minutes")
+    print(">>> Scheduled Auto-Stop: 5 Hours and 55 Minutes")
     print("==================================================")
 
     slot_interval = 1000.0 / max(1, num_accounts)
-    
+
     tasks = []
     for i, acc in enumerate(ACCOUNTS):
         offset = (i * slot_interval) + random.uniform(2.0, 6.0) if i > 0 else 0.0
